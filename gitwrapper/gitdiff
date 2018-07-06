@@ -1,0 +1,51 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+#my $stem=`git rev-parse --show-toplevel`;
+chdir($ENV{PWD});
+
+git_diff();
+
+sub git_diff
+{
+  if(!GetOptions(
+      "h"   => \&help,
+    ))
+  {
+    print "Failed to get options\n";
+    help("submit");
+  }
+  my $file=shift(@ARGV);
+  my ($path,$commit)=split("@",$file);
+  $commit="HEAD" if $commit eq "";
+  $path="./$path" if $path!~/^\//;
+  my $tmpfile="/tmp/gitdiff.$ENV{USER}.$commit";
+  run_cmd("git show $commit:$path > $tmpfile");
+  system("tkdiff $tmpfile $path");
+  run_cmd("rm $tmpfile");
+}
+
+
+sub help
+{
+  print "Usage:
+  -h          Help (this msg)
+
+  Common scenario:
+  git tkdiff <FILE>    ->  diff file with HEAD
+  git tkdiff <FILE>@<COMMIT>   -> diff file with history COMMIT
+";
+  exit(255);
+}
+
+sub run_cmd
+{
+  my $cmd=shift;
+  print "Run Cmd: \"$cmd\"\n";
+  if(system($cmd)!=0)
+  {
+    die "Get failed when executing \"$cmd\"\n";
+  }
+}
+
+

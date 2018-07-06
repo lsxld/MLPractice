@@ -1,0 +1,11 @@
+#!/bin/sh
+cd $GIT_PREFIX
+file=$(echo "$1" | sed 's/\//__/g')
+c1=$2
+c2=$3
+tmp1=/tmp/$USER.$file.$c1
+tmp2=/tmp/$USER.$file.$c2
+git show $c1:./$1 > $tmp1
+git show $c2:./$1 > $tmp2
+tkdiff $tmp1 $tmp2
+rm $tmp1 $tmp2

@@ -1,0 +1,224 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+my $stem=`git rev-parse --show-toplevel`;
+chdir($stem);
+
+git_submit();
+
+my $stash_flag=0;
+
+sub git_submit
+{
+  my $msg;
+  my $wip;
+  my $all;
+  my $branch;
+  if(!GetOptions(
+      "wip" => \$wip,
+      "m=s" => \$msg,
+      "a"   => \$all,
+      "b=s" => \$branch,
+      "h"   => \&help,
+    ))
+  {
+    print "Failed to get options\n";
+    help("submit");
+  }
+  die "No changed file\n" if `git status -s ` eq  "";
+  die "-m msg is required with -a option" if($all && $msg eq "");
+  $branch = curr_branch() if $branch eq "";
+  $wip = 1 if $branch ne "master";
+  $msg = "WIP: $msg" if $wip;
+  my @submit_files;
+  my $tmpfile="/tmp/gitsubmit.".rand;
+  if(!$all)
+  {
+    if(-f "$stem/.gitsubmit_save")
+    {
+      system("mv $stem/.gitsubmit_save $tmpfile");
+    }
+    else
+    {
+      open(TMP, ">$tmpfile");
+      print TMP "Commit message:";
+      print TMP "  [Tips: Remove \'WIP:\' if the change need to be merged to master]" if $wip;
+      print TMP "\n";
+      print TMP "$msg";
+      print TMP "\n\n";
+      print TMP "Files to be submitted:\n";
+      print TMP `git status -s`;
+      close(TMP);
+    }
+    edit_submit_file($tmpfile, \$msg, \@submit_files);
+    while($msg=~/^\s*$/ or $msg=~/^WIP:\s*$/)
+    {
+      print "Commit message is empty, do you want to edit again?(Y/N): ";
+      my $answer=<STDIN>;
+      chomp($answer);
+      if(uc($answer) eq "Y")
+      {
+        edit_submit_file($tmpfile, \$msg, \@submit_files);
+      }
+      else
+      {
+        run_cmd("rm $tmpfile");
+        die "Submit aborted!\n";
+      }
+    }
+    $msg=~s/\n/\\n/mg;
+  }
+  run_cmd("git add -A :/");
+  run_cmd("git stash save \"gitsubmit\"> /dev/null");
+  $stash_flag=1;
+  run_cmd("git fetch origin > /dev/null");
+  run_cmd("git fetch --tags origin > /dev/null");
+  my $curr_b = curr_branch();
+  if(exist_branch($branch))
+  {
+    if($curr_b eq $branch)
+    {
+      run_cmd("git reset --keep origin/$branch > /dev/null");
+      run_cmd("git rebase origin/master > /dev/null");
+    }
+    else
+    {
+      run_cmd("git reset --keep origin/$curr_b > /dev/null");
+      run_cmd("git checkout $branch > /dev/null");
+      run_cmd("git reset --keep origin/$branch > /dev/null");
+      run_cmd("git rebase origin/master > /dev/null");
+    }
+  }
+  else
+  {
+    if($curr_b eq $branch)
+    {
+      run_cmd("git rebase origin/master > /dev/null");
+    }
+    else
+    {
+      run_cmd("git reset --keep origin/$curr_b > /dev/null");
+      run_cmd("git checkout -b $branch > /dev/null");
+    }
+  }
+  run_cmd("git stash pop >/dev/null ");
+  run_cmd("git reset");
+  $stash_flag=0;
+  if($all)
+  {
+    run_cmd("git add -A :/");
+  }
+  else
+  {
+    foreach my $file (@submit_files)
+    {
+      run_cmd("git add \"$file\"");
+    }
+  }
+#  print("git commit -m \"$msg\"\n");
+#  print("git push -u origin $branch\n");
+  run_cmd("git commit -m \"$msg\"");
+  my $git_version=`git --version`;
+  chomp($git_version);
+  if($git_version =~ /git version 2\./)
+  {
+    run_cmd("git push --force-with-lease -u origin $branch");
+  }
+  else
+  {
+    run_cmd("git push -u origin $branch");
+  }
+  run_cmd("rm $tmpfile") if not $all;
+}
+
+sub edit_submit_file
+{
+  my ($tmpfile, $msgref, $submit_file_ref)=@_;
+  run_cmd("vim $tmpfile");
+  open(TMP, "$tmpfile");
+  my $msg;
+  my $msg_begin;
+  my $files_begin;
+  while(my $line=<TMP>)
+  {
+    chomp($line);
+    if($line=~/Commit message/)
+    {
+      $msg_begin=1;
+      next;
+    }
+    if($line=~/Files to be submitted/)
+    {
+      $files_begin=1;
+      $msg_begin=0;
+      next;
+    }
+    if($msg_begin)
+    {
+      $msg.="$line\n";
+    }
+    if($files_begin)
+    {
+      if($line=~/(.{2}) (.+)/)
+      {
+        my $file=$2;
+        if($file!~/^\s*$/)
+        {
+          push(@$submit_file_ref, $2);
+        }
+      }
+    }
+  }
+  $msg=~s/\s+$//mg;
+  $$msgref=$msg;
+  return 1;
+}
+
+sub curr_branch
+{
+  my $output=`git branch | grep \\*`;
+  chomp($output);
+  my $branch=$output;
+  $branch=~s/^[\*\s]+//;
+  return $branch;
+}
+
+sub exist_branch
+{
+  my $branch=shift;
+  my $output=`git branch -r |grep origin/$branch`;
+  if($output eq "")
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
+
+sub help
+{
+  print "Usage:
+  -h          Help (this msg)
+  -wip        Add \"WIP:\" in commit msg
+  -m <msg>    Commit msg
+  -a          Submit all (-m msg is required)
+  -b <branch> Submit to branch 
+";
+  exit(255);
+}
+
+sub run_cmd
+{
+  my $cmd=shift;
+  print "Run Cmd: \"$cmd\"\n";
+  if(system($cmd)!=0)
+  {
+    system("git stash pop >/dev/null") if($stash_flag);
+    system("git reset HEAD^ >/dev/null") if $cmd=~/git push/;
+    die "Get failed when executing \"$cmd\"\n";
+  }
+}
+
+

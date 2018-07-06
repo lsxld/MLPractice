@@ -1,0 +1,133 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+#my $stem=`git rev-parse --show-toplevel`;
+chdir($ENV{PWD});
+
+git_sync();
+my $stash_flag=0;
+
+sub git_sync
+{
+  my $branch;
+  my $fixcommit;
+  if(!GetOptions(
+      "b=s" => \$branch,
+      "c=s" => \$fixcommit,
+      "h"   => \&help,
+    ))
+  {
+    print "Failed to get options\n";
+    help("submit");
+  }
+  my @files=@ARGV;
+  run_cmd("git fetch origin > /dev/null");
+  run_cmd("git fetch --tags origin > /dev/null");
+  $branch=curr_branch() if $branch eq "";
+  die "Not existed remote branch $branch\n" if not exist_branch($branch);
+  if($branch ne curr_branch())
+  {
+    die "-b option do not support file sync for now.\n" if(@files>0);
+    my $stash=0;
+    if(`git status -s` ne "")
+    {
+      run_cmd("git add -A :/");
+      run_cmd("git stash save \"gitsync\" > /dev/null");
+      $stash=1;
+      $stash_flag=1;
+    }
+    run_cmd("git checkout $branch");
+    run_cmd("git reset --keep origin/$branch");
+    run_cmd("git stash pop > /dev/null") if $stash;
+    $stash_flag=0;
+  }
+  else
+  {
+    if(@files>0)
+    {
+      foreach my $file (@files)
+      {
+        my ($filename, $commit)=split("@",$file);
+        $commit = $fixcommit if $commit eq "";
+        $commit = "origin" if $commit eq "";
+        run_cmd("git checkout $commit $filename");
+      }
+    }
+    else
+    {
+      my $stash=0;
+      if(`git status -s` ne "")
+      {
+        run_cmd("git add -A :/");
+        run_cmd("git stash save \"gitsync\" > /dev/null");
+        $stash=1;
+        $stash_flag=1;
+      }
+      if($fixcommit eq "")
+      {
+        run_cmd("git reset --keep origin/$branch");
+        run_cmd("git rebase origin/master");
+      }
+      else
+      {
+        run_cmd("git reset --keep $fixcommit");
+        run_cmd("git checkout -f");
+        run_cmd("git clean -fd");
+      }
+      run_cmd("git stash pop > /dev/null") if $stash;
+      run_cmd("git reset > /dev/null");
+      $stash_flag=0;
+    }
+  }
+}
+
+sub curr_branch
+{
+  my $output=`git branch | grep \\*`;
+  chomp($output);
+  my $branch=$output;
+  $branch=~s/^[\*\s]+//;
+  return $branch;
+}
+
+sub exist_branch
+{
+  my $branch=shift;
+  my $output=`git branch -r |grep origin/$branch`;
+  if($output eq "")
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
+
+sub help
+{
+  print "Usage:
+  -h          Help (this msg)
+  -b <branch> Sync to branch
+
+  Common scenario:
+  git sync    ->  Sync current branch match with origin, rebase to master
+  git sync -c <COMMIT>   -> Sync current branch to a history commit
+  git sync <FILE>@<COMMIT>   -> Sync file/dir to history commit
+  git sync -b <BRANCH>   -> Switch to BRANCH and sync to origin
+";
+  exit(255);
+}
+
+sub run_cmd
+{
+  my $cmd=shift;
+  print "Run Cmd: \"$cmd\"\n";
+  if(system($cmd)!=0)
+  {
+    system("git stash pop") if $stash_flag;
+    die "Get failed when executing \"$cmd\"\n";
+  }
+}
+
+
