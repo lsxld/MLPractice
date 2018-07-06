@@ -16,6 +16,13 @@ RUN pip install ipython numpy scipy
 RUN pip install keras
 RUN pip install h5py
 
+##Install torch
+RUN git clone https://github.com/torch/distro.git ~/torch --recursive
+RUN cd ~/torch \
+    && sed 's/sudo //g' install-deps > install-deps.root \
+    && bash install-deps.root \
+    && ./install.sh
+
 RUN rm /bin/sh && ln -s bash /bin/sh
 
 CMD ["/bin/bash"]
